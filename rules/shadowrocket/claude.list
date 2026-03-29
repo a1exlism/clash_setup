@@ -4,5 +4,5 @@ DOMAIN-SUFFIX,anthropic.com
 DOMAIN-SUFFIX,claudeusercontent.com
 DOMAIN-SUFFIX,claude.ai
 DOMAIN-SUFFIX,intercomcdn.com
-# DOMAIN-KEYWORD,claude
+DOMAIN-KEYWORD,claude
 DOMAIN-KEYWORD,anthropic
