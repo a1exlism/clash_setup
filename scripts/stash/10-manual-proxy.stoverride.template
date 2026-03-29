@@ -2,7 +2,7 @@ name: SECUS Manual Proxy
 desc: Local/private custom node template. Fill in real parameters before use.
 
 proxies:
-  - name: MANUAL_PROXY
+  - name: 🇺🇸 美国家宽
     type: anytls
     server: REPLACE_WITH_PRIVATE_HOST_OR_IP
     port: 443

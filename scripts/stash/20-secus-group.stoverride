@@ -1,10 +1,10 @@
 name: SECUS Group
-desc: Add a dedicated custom group for MANUAL_PROXY.
+desc: Add a dedicated custom group for 🇺🇸 美国家宽.
 
 proxy-groups:
   - name: 🟩SECUS
     type: select
     proxies:
-      - MANUAL_PROXY
+      - 🇺🇸 美国家宽
       # - DIRECT
       - REJECT
