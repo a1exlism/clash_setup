@@ -1,0 +1,12 @@
+name: SECUS Manual Proxy
+desc: Local/private custom node template. Fill in real parameters before use.
+
+proxies:
+  - name: MANUAL_PROXY
+    type: anytls
+    server: REPLACE_WITH_PRIVATE_HOST_OR_IP
+    port: 443
+    password: REPLACE_ME
+    client-fingerprint: chrome
+    skip-cert-verify: false
+    udp: false

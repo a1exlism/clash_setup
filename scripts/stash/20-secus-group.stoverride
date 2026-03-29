@@ -1,0 +1,10 @@
+name: SECUS Group
+desc: Add a dedicated custom group for MANUAL_PROXY.
+
+proxy-groups:
+  - name: 🟩SECUS
+    type: select
+    proxies:
+      - MANUAL_PROXY
+      # - DIRECT
+      - REJECT

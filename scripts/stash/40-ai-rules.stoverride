@@ -1,0 +1,18 @@
+name: SECUS AI Rules
+desc: Prepend private-network and AI rules to route through 🟩SECUS.
+
+rules:
+  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve
+  - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve
+  - IP-CIDR,127.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,198.18.0.0/30,DIRECT,no-resolve
+  - IP-CIDR,66.154.108.107/32,DIRECT
+
+  - RULE-SET,Gemini,🟩SECUS
+  - RULE-SET,Paypal,🟩SECUS
+  - RULE-SET,Openai,🟩SECUS
+  - RULE-SET,Claude,🟩SECUS
+  - DOMAIN-SUFFIX,ai,🟩SECUS
+  - DOMAIN-KEYWORD,cursor,🟩SECUS
+  - DOMAIN-KEYWORD,michigan,🟩SECUS
