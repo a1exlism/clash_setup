@@ -1,3 +1,8 @@
+/**
+ * global extention script
+ * 全局扩展脚本
+ */
+
 // 确保某个字段是数组；不存在就初始化为空数组
 function ensureArray(obj, key) {
   if (!Array.isArray(obj[key])) obj[key] = [];
@@ -12,110 +17,94 @@ function ensureObject(obj, key) {
   return obj[key];
 }
 
-// 按 name 插入或合并配置项（适用于 proxies / proxy-groups）
-function upsertNamed(list, item, merge = false) {
-  const index = list.findIndex((x) => x && x.name === item.name);
-
-  // 不存在：直接插入
-  if (index === -1) {
+// 不存在才插入
+function addNamed(list, item) {
+  if (!list.some((x) => x?.name === item.name)) {
     list.push(item);
-    return;
-  }
-
-  // 已存在且需要合并：保留旧值并补充新值
-  if (merge) {
-    const old = list[index];
-    list[index] = { ...old, ...item };
-
-    // 特殊处理 proxies 数组：去重合并
-    if (Array.isArray(old.proxies) || Array.isArray(item.proxies)) {
-      list[index].proxies = [
-        ...new Set([...(old.proxies || []), ...(item.proxies || [])]),
-      ];
-    }
   }
 }
 
-// 判断某个规则目标是否存在
-// 可用于 rules 最后的策略名，如 🟩SECUS / Final / Proxies / DIRECT
+// 判断策略是否存在
 function hasPolicy(config, name) {
+  const builtins = ["DIRECT", "REJECT", "PROXY", "PROXIES"];
   return (
-    ["PROXY", "PROXIES", "REJECT", "DIRECT"].includes(name) ||
-    (config.proxies || []).some((x) => x.name === name) ||
-    (config["proxy-groups"] || []).some((x) => x.name === name)
+    builtins.includes(name) ||
+    (config.proxies || []).some((x) => x?.name === name) ||
+    (config["proxy-groups"] || []).some((x) => x?.name === name)
   );
 }
 
-// 从候选策略中选第一个存在的；都不存在则使用 fallback
-function pickPolicy(config, candidates, fallback = "REJECT") {
-  for (const name of candidates) {
-    if (hasPolicy(config, name)) return name;
-  }
-  return fallback;
+// 按候选顺序选第一个可用策略；如果都不存在，则退回 candidates[0]
+function selectPolicy(config, candidates, fallback = "REJECT") {
+  return (
+    candidates.find((name) => hasPolicy(config, name)) ||
+    candidates[0] ||
+    fallback
+  );
 }
 
-// 添加规则；支持前置/后置；自动去重
-function addRule(config, rule, prepend = false) {
-  ensureArray(config, "rules");
-  if (config.rules.includes(rule)) return;
-  prepend ? config.rules.unshift(rule) : config.rules.push(rule);
-}
-
-// 插入或更新 rule-providers
-function upsertRuleProvider(config, name, value) {
+// 写入或更新 rule-provider
+function setRuleProvider(config, name, provider) {
   const providers = ensureObject(config, "rule-providers");
-  providers[name] = { ...(providers[name] || {}), ...value };
+  providers[name] = { ...(providers[name] || {}), ...provider };
+}
+
+// 批量前置规则：保持输入顺序，并自动去重
+function prependRules(config, rules) {
+  const currentRules = ensureArray(config, "rules");
+  const newRules = rules.filter((rule) => !currentRules.includes(rule));
+  config.rules = [...newRules, ...currentRules];
+}
+
+/**
+ * NOTE: 需要手动维护的静态节点区
+ * 后续 proxy-groups 会直接引用这里的 name
+ */
+const customProxies = [
+  {
+    name: "🇺🇸 美国家宽",
+    xxxx,
+  },
+];
+
+// 由静态节点派生出节点名列表，供策略组复用
+function getCustomProxyNames() {
+  return customProxies.map((item) => item.name);
 }
 
 function main(config) {
-  // 初始化常用字段，避免后续操作报错
   ensureArray(config, "proxies");
   ensureArray(config, "proxy-groups");
   ensureArray(config, "rules");
   ensureObject(config, "rule-providers");
 
-  // 1. 动态注入代理节点
-  upsertNamed(config.proxies, {
-    name: "MANUAL_PROXY",
-    /**
-     * NOTE: 自定义配置节点，如家宽节点
-     */
-  });
+  // 1. 注入自定义节点（唯一静态配置来源）
+  customProxies.forEach((proxy) => addNamed(config.proxies, proxy));
+
+  const customProxyNames = getCustomProxyNames();
 
   // 2. 动态注入策略组
-  // merge=true 表示如果组已存在，则补充 proxies 成员而不是直接覆盖
-  upsertNamed(
-    config["proxy-groups"],
+  // 这里直接引用 customProxies 的 name，避免重复写节点名
+  [
     {
-      name: "🟩SECUS", //  NOTE: 自定义 proxy group
+      name: "🟩SECUS",
       type: "select",
-      proxies: ["MANUAL_PROXY", "REJECT"], // error when rejection
+      proxies: [...customProxyNames, "REJECT"],
     },
-    true,
-  );
-
-  upsertNamed(
-    config["proxy-groups"],
     {
       name: "Proxies",
       type: "select",
-      proxies: ["MANUAL_PROXY", "REJECT"], // error when rejection
+      proxies: [...customProxyNames, "REJECT"],
     },
-    true,
-  );
-
-  upsertNamed(
-    config["proxy-groups"],
     {
       name: "US",
       type: "select",
-      proxies: ["MANUAL_PROXY", "REJECT"], // error when rejection
+      proxies: [...customProxyNames, "REJECT"],
     },
-    true,
-  );
+  ].forEach((group) => addNamed(config["proxy-groups"], group));
 
   // 3. 动态注入 rule-providers
-  const ruleProviders = {
+  const providers = {
     Paypal: {
       type: "http",
       behavior: "classical",
@@ -123,7 +112,6 @@ function main(config) {
       path: "./rules/Paypal.yaml",
       interval: 86400,
     },
-
     Gemini: {
       type: "http",
       behavior: "classical",
@@ -131,7 +119,6 @@ function main(config) {
       path: "./rules/Gemini.yaml",
       interval: 86400,
     },
-
     Openai: {
       type: "http",
       behavior: "classical",
@@ -139,22 +126,13 @@ function main(config) {
       path: "./rules/Openai.yaml",
       interval: 86400,
     },
-
     Claude: {
       type: "http",
       behavior: "classical",
+      url: "https://raw.githubusercontent.com/a1exlism/clash_setup/refs/heads/main/rules/clash/claude.yaml",
       path: "./rules/Claude.yaml",
-      payload: [
-        "DOMAIN,cdn.usefathom.com",
-        "DOMAIN-SUFFIX,anthropic.com",
-        "DOMAIN-SUFFIX,claudeusercontent.com",
-        "DOMAIN-SUFFIX,claude.ai",
-        "DOMAIN-SUFFIX,intercomcdn.com",
-        "DOMAIN-KEYWORD,claude",
-        "DOMAIN-KEYWORD,anthropic",
-      ],
+      interval: 86400,
     },
-
     Adobe: {
       type: "http",
       behavior: "classical",
@@ -162,7 +140,6 @@ function main(config) {
       path: "./rules/Adobe.yaml",
       interval: 86400,
     },
-
     AD: {
       type: "http",
       behavior: "domain",
@@ -170,7 +147,6 @@ function main(config) {
       path: "./rules/AD.yaml",
       interval: 86400,
     },
-
     EasyList: {
       type: "http",
       behavior: "domain",
@@ -178,7 +154,6 @@ function main(config) {
       path: "./rules/EasyList.yaml",
       interval: 86400,
     },
-
     EasyListChina: {
       type: "http",
       behavior: "domain",
@@ -186,7 +161,6 @@ function main(config) {
       path: "./rules/EasyListChina.yaml",
       interval: 86400,
     },
-
     EasyPrivacy: {
       type: "http",
       behavior: "domain",
@@ -194,7 +168,6 @@ function main(config) {
       path: "./rules/EasyPrivacy.yaml",
       interval: 86400,
     },
-
     ProgramAD: {
       type: "http",
       behavior: "domain",
@@ -204,17 +177,18 @@ function main(config) {
     },
   };
 
-  Object.entries(ruleProviders).forEach(([name, value]) => {
-    upsertRuleProvider(config, name, value);
+  Object.entries(providers).forEach(([name, provider]) => {
+    setRuleProvider(config, name, provider);
   });
 
-  // 4. 根据当前最终配置，动态选择规则目标
-  // 存在 🟩SECUS 就用 🟩SECUS，否则尝试 Final / Proxies，最后回退 DIRECT
-  const rule_ai = pickPolicy(config, ["🟩SECUS", "Final", "Proxies"], "DIRECT");
-  const rule_fin = pickPolicy(config, ["Proxies", "Final"], "DIRECT");
+  // 4. 动态选择规则目标
+  const secUSPolicy = selectPolicy(config, ["🟩SECUS", "Final", "Proxies"]);
+  const commonPolicy = selectPolicy(config, ["Proxies", "Final"]);
 
-  // 5. 插入高优先级规则（前置）
-  [
+  // 5. 动态注入前置规则
+  // 这里从上到下就是最终匹配顺序
+  prependRules(config, [
+    // 局域网 / 本地地址直连
     "IP-CIDR,10.0.0.0/8,DIRECT,no-resolve",
     "IP-CIDR,172.16.0.0/12,DIRECT,no-resolve",
     "IP-CIDR,192.168.0.0/16,DIRECT,no-resolve",
@@ -222,28 +196,29 @@ function main(config) {
     "IP-CIDR,198.18.0.0/30,DIRECT,no-resolve",
     "IP-CIDR,66.154.108.107/32,DIRECT",
 
-    `RULE-SET,Gemini,${rule_ai}`,
-    `RULE-SET,Paypal,${rule_ai}`,
-    `RULE-SET,Openai,${rule_ai}`,
-    `RULE-SET,Claude,${rule_ai}`,
-    `DOMAIN-SUFFIX,ai,${rule_ai}`,
-    `DOMAIN-KEYWORD,cursor,${rule_ai}`,
-    `DOMAIN-KEYWORD,michigan,${rule_ai}`,
+    // 国内域名直连
+    "DOMAIN-SUFFIX,cn,DIRECT",
 
+    // AI 服务
+    `RULE-SET,Gemini,${secUSPolicy}`,
+    `RULE-SET,Paypal,${secUSPolicy}`,
+    `RULE-SET,Openai,${secUSPolicy}`,
+    `RULE-SET,Claude,${secUSPolicy}`,
+    `DOMAIN-SUFFIX,ai,${secUSPolicy}`,
+    `DOMAIN-KEYWORD,cursor,${secUSPolicy}`,
+
+    // 广告拦截
     "RULE-SET,AD,REJECT",
     "RULE-SET,EasyList,REJECT",
     "RULE-SET,EasyListChina,REJECT",
     "RULE-SET,EasyPrivacy,REJECT",
     "RULE-SET,ProgramAD,REJECT",
-    `DOMAIN-SUFFIX,io,${rule_fin}`,
-    `DOMAIN-SUFFIX,steampowered.com,${rule_fin}`,
-    `RULE-SET,Adobe,${rule_fin}`,
-  ].forEach((rule) => addRule(config, rule, true));
 
-  // 6. 插入低优先级规则（后置） => 一般会被 Final 过滤
-  // [
-
-  // ].forEach(rule => addRule(config, rule, true));
+    // 通用分流
+    `DOMAIN-SUFFIX,io,${commonPolicy}`,
+    `DOMAIN-SUFFIX,steampowered.com,${commonPolicy}`,
+    `RULE-SET,Adobe,${commonPolicy}`,
+  ]);
 
   return config;
 }
