@@ -17,11 +17,30 @@ function ensureObject(obj, key) {
   return obj[key];
 }
 
-// 不存在才插入
+// proxies 用：不存在才插入
 function addNamed(list, item) {
   if (!list.some((x) => x?.name === item.name)) {
     list.push(item);
   }
+}
+
+// proxy-groups 用：存在则合并 proxies，不存在则创建
+function upsertGroup(list, group) {
+  const index = list.findIndex((x) => x?.name === group.name);
+
+  if (index === -1) {
+    list.push(group);
+    return;
+  }
+
+  const current = list[index];
+  list[index] = {
+    ...current,
+    ...group,
+    proxies: [
+      ...new Set([...(current.proxies || []), ...(group.proxies || [])]),
+    ],
+  };
 }
 
 // 判断策略是否存在
@@ -49,7 +68,7 @@ function setRuleProvider(config, name, provider) {
   providers[name] = { ...(providers[name] || {}), ...provider };
 }
 
-// 批量前置规则：保持输入顺序，并自动去重
+// 前置规则：保持输入顺序 = 最终匹配顺序
 function prependRules(config, rules) {
   const currentRules = ensureArray(config, "rules");
   const newRules = rules.filter((rule) => !currentRules.includes(rule));
@@ -57,8 +76,8 @@ function prependRules(config, rules) {
 }
 
 /**
- * NOTE: 需要手动维护的静态节点区
- * 后续 proxy-groups 会直接引用这里的 name
+ * TODO: 唯一静态配置：手动维护自定义节点
+ * 以后只改这里，其他配置项会动态引用这些节点名
  */
 const customProxies = [
   {
@@ -67,127 +86,91 @@ const customProxies = [
   },
 ];
 
-// 由静态节点派生出节点名列表，供策略组复用
-function getCustomProxyNames() {
-  return customProxies.map((item) => item.name);
-}
+/**
+ * NOTE: 动态生成的策略组模板
+ * 这些组会自动包含 customProxies 中的节点名
+ */
+const groupTemplates = ["🟩SECUS", "Proxies", "US"];
 
-function main(config) {
-  ensureArray(config, "proxies");
-  ensureArray(config, "proxy-groups");
-  ensureArray(config, "rules");
-  ensureObject(config, "rule-providers");
+/**
+ * 动态注入的 rule-providers
+ */
+const ruleProviders = {
+  Paypal: {
+    type: "http",
+    behavior: "classical",
+    url: "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/refs/heads/master/rule/Clash/PayPal/PayPal.yaml",
+    path: "./rules/Paypal.yaml",
+    interval: 86400,
+  },
+  Gemini: {
+    type: "http",
+    behavior: "classical",
+    url: "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/Gemini/Gemini.yaml",
+    path: "./rules/Gemini.yaml",
+    interval: 86400,
+  },
+  Openai: {
+    type: "http",
+    behavior: "classical",
+    url: "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/OpenAI/OpenAI.yaml",
+    path: "./rules/Openai.yaml",
+    interval: 86400,
+  },
+  Claude: {
+    type: "http",
+    behavior: "classical",
+    url: "https://raw.githubusercontent.com/a1exlism/clash_setup/refs/heads/main/rules/clash/claude.yaml",
+    path: "./rules/Claude.yaml",
+    interval: 86400,
+  },
+  Adobe: {
+    type: "http",
+    behavior: "classical",
+    url: "https://raw.githubusercontent.com/autocrusher/clash-rules/refs/heads/main/Adobe.list",
+    path: "./rules/Adobe.yaml",
+    interval: 86400,
+  },
+  AD: {
+    type: "http",
+    behavior: "domain",
+    url: "https://raw.githubusercontent.com/earoftoast/clash-rules/main/AD.yaml",
+    path: "./rules/AD.yaml",
+    interval: 86400,
+  },
+  EasyList: {
+    type: "http",
+    behavior: "domain",
+    url: "https://raw.githubusercontent.com/earoftoast/clash-rules/main/EasyList.yaml",
+    path: "./rules/EasyList.yaml",
+    interval: 86400,
+  },
+  EasyListChina: {
+    type: "http",
+    behavior: "domain",
+    url: "https://raw.githubusercontent.com/earoftoast/clash-rules/main/EasyListChina.yaml",
+    path: "./rules/EasyListChina.yaml",
+    interval: 86400,
+  },
+  EasyPrivacy: {
+    type: "http",
+    behavior: "domain",
+    url: "https://raw.githubusercontent.com/earoftoast/clash-rules/main/EasyPrivacy.yaml",
+    path: "./rules/EasyPrivacy.yaml",
+    interval: 86400,
+  },
+  ProgramAD: {
+    type: "http",
+    behavior: "domain",
+    url: "https://raw.githubusercontent.com/earoftoast/clash-rules/main/ProgramAD.yaml",
+    path: "./rules/ProgramAD.yaml",
+    interval: 86400,
+  },
+};
 
-  // 1. 注入自定义节点（唯一静态配置来源）
-  customProxies.forEach((proxy) => addNamed(config.proxies, proxy));
-
-  const customProxyNames = getCustomProxyNames();
-
-  // 2. 动态注入策略组
-  // 这里直接引用 customProxies 的 name，避免重复写节点名
-  [
-    {
-      name: "🟩SECUS",
-      type: "select",
-      proxies: [...customProxyNames, "REJECT"],
-    },
-    {
-      name: "Proxies",
-      type: "select",
-      proxies: [...customProxyNames, "REJECT"],
-    },
-    {
-      name: "US",
-      type: "select",
-      proxies: [...customProxyNames, "REJECT"],
-    },
-  ].forEach((group) => addNamed(config["proxy-groups"], group));
-
-  // 3. 动态注入 rule-providers
-  const providers = {
-    Paypal: {
-      type: "http",
-      behavior: "classical",
-      url: "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/refs/heads/master/rule/Clash/PayPal/PayPal.yaml",
-      path: "./rules/Paypal.yaml",
-      interval: 86400,
-    },
-    Gemini: {
-      type: "http",
-      behavior: "classical",
-      url: "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/Gemini/Gemini.yaml",
-      path: "./rules/Gemini.yaml",
-      interval: 86400,
-    },
-    Openai: {
-      type: "http",
-      behavior: "classical",
-      url: "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/OpenAI/OpenAI.yaml",
-      path: "./rules/Openai.yaml",
-      interval: 86400,
-    },
-    Claude: {
-      type: "http",
-      behavior: "classical",
-      url: "https://raw.githubusercontent.com/a1exlism/clash_setup/refs/heads/main/rules/clash/claude.yaml",
-      path: "./rules/Claude.yaml",
-      interval: 86400,
-    },
-    Adobe: {
-      type: "http",
-      behavior: "classical",
-      url: "https://raw.githubusercontent.com/autocrusher/clash-rules/refs/heads/main/Adobe.list",
-      path: "./rules/Adobe.yaml",
-      interval: 86400,
-    },
-    AD: {
-      type: "http",
-      behavior: "domain",
-      url: "https://raw.githubusercontent.com/earoftoast/clash-rules/main/AD.yaml",
-      path: "./rules/AD.yaml",
-      interval: 86400,
-    },
-    EasyList: {
-      type: "http",
-      behavior: "domain",
-      url: "https://raw.githubusercontent.com/earoftoast/clash-rules/main/EasyList.yaml",
-      path: "./rules/EasyList.yaml",
-      interval: 86400,
-    },
-    EasyListChina: {
-      type: "http",
-      behavior: "domain",
-      url: "https://raw.githubusercontent.com/earoftoast/clash-rules/main/EasyListChina.yaml",
-      path: "./rules/EasyListChina.yaml",
-      interval: 86400,
-    },
-    EasyPrivacy: {
-      type: "http",
-      behavior: "domain",
-      url: "https://raw.githubusercontent.com/earoftoast/clash-rules/main/EasyPrivacy.yaml",
-      path: "./rules/EasyPrivacy.yaml",
-      interval: 86400,
-    },
-    ProgramAD: {
-      type: "http",
-      behavior: "domain",
-      url: "https://raw.githubusercontent.com/earoftoast/clash-rules/main/ProgramAD.yaml",
-      path: "./rules/ProgramAD.yaml",
-      interval: 86400,
-    },
-  };
-
-  Object.entries(providers).forEach(([name, provider]) => {
-    setRuleProvider(config, name, provider);
-  });
-
-  // 4. 动态选择规则目标
-  const secUSPolicy = selectPolicy(config, ["🟩SECUS", "Final", "Proxies"]);
-  const commonPolicy = selectPolicy(config, ["Proxies", "Final"]);
-
-  // 5. 动态注入前置规则
-  // 这里从上到下就是最终匹配顺序
-  prependRules(config, [
+// 固定优先级的前置规则模板
+function buildPrependRules(secUSPolicy, commonPolicy) {
+  return [
     // 局域网 / 本地地址直连
     "IP-CIDR,10.0.0.0/8,DIRECT,no-resolve",
     "IP-CIDR,172.16.0.0/12,DIRECT,no-resolve",
@@ -218,7 +201,47 @@ function main(config) {
     `DOMAIN-SUFFIX,io,${commonPolicy}`,
     `DOMAIN-SUFFIX,steampowered.com,${commonPolicy}`,
     `RULE-SET,Adobe,${commonPolicy}`,
-  ]);
+  ];
+}
+
+function getCustomProxyNames() {
+  return customProxies.map((item) => item.name);
+}
+
+function buildGroups(proxyNames) {
+  return groupTemplates.map((name) => ({
+    name,
+    type: "select",
+    proxies: [...proxyNames, "REJECT"],
+  }));
+}
+
+function main(config) {
+  ensureArray(config, "proxies");
+  ensureArray(config, "proxy-groups");
+  ensureArray(config, "rules");
+  ensureObject(config, "rule-providers");
+
+  // 1. 注入自定义节点（唯一静态来源）
+  customProxies.forEach((proxy) => addNamed(config.proxies, proxy));
+
+  // 2. 动态注入 / 合并策略组
+  const customProxyNames = getCustomProxyNames();
+  buildGroups(customProxyNames).forEach((group) => {
+    upsertGroup(config["proxy-groups"], group);
+  });
+
+  // 3. 动态注入 rule-providers
+  Object.entries(ruleProviders).forEach(([name, provider]) => {
+    setRuleProvider(config, name, provider);
+  });
+
+  // 4. NOTE: 动态选择规则目标
+  const secUSPolicy = selectPolicy(config, ["🟩SECUS", "Final", "Proxies"]);
+  const commonPolicy = selectPolicy(config, ["Proxies", "Final"]);
+
+  // 5. 动态注入前置规则
+  prependRules(config, buildPrependRules(secUSPolicy, commonPolicy));
 
   return config;
 }
