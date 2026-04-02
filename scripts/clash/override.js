@@ -1,15 +1,40 @@
 /**
- * global extention script
- * 全局扩展脚本
+ * global extension script
+ * 强约束 DNS + 模块化结构版
+ * ==== WARNING ====
+ * 必须禁用 设置 > Clash 设置 > DNS 覆写 功能，以保证配置文件覆写可用
+ * ==== WARNING ====
  */
 
-// 确保某个字段是数组；不存在就初始化为空数组
+// ====================
+// 1) 静态配置
+// ====================
+
+/**
+ * NOTE: 如需静态注入节点，在这里填写
+ * 默认留空，可直接运行
+ */
+const customProxies = [
+  // {
+  //   name: "🇺🇸 美国家宽",
+  //   type: "ss",
+  //   server: "1.2.3.4",
+  //   port: 443,
+  //   cipher: "aes-128-gcm",
+  //   password: "password",
+  //   udp: true
+  // }
+];
+
+// ====================
+// 2) 通用工具
+// ====================
+
 function ensureArray(obj, key) {
   if (!Array.isArray(obj[key])) obj[key] = [];
   return obj[key];
 }
 
-// 确保某个字段是对象；不存在就初始化为空对象
 function ensureObject(obj, key) {
   if (!obj[key] || typeof obj[key] !== "object" || Array.isArray(obj[key])) {
     obj[key] = {};
@@ -17,19 +42,25 @@ function ensureObject(obj, key) {
   return obj[key];
 }
 
-// proxies 用：不存在才插入
+function uniq(arr = []) {
+  return [...new Set(arr.filter(Boolean))];
+}
+
 function addNamed(list, item) {
+  if (!item?.name) return;
   if (!list.some((x) => x?.name === item.name)) {
     list.push(item);
   }
 }
 
-// proxy-groups 用：存在则合并 proxies，不存在则创建
 function upsertGroup(list, group) {
   const index = list.findIndex((x) => x?.name === group.name);
 
   if (index === -1) {
-    list.push(group);
+    list.push({
+      ...group,
+      proxies: uniq(group.proxies || []),
+    });
     return;
   }
 
@@ -37,13 +68,10 @@ function upsertGroup(list, group) {
   list[index] = {
     ...current,
     ...group,
-    proxies: [
-      ...new Set([...(current.proxies || []), ...(group.proxies || [])]),
-    ],
+    proxies: uniq([...(current.proxies || []), ...(group.proxies || [])]),
   };
 }
 
-// 判断策略是否存在
 function hasPolicy(config, name) {
   const builtins = ["DIRECT", "REJECT", "PROXY", "PROXIES"];
   return (
@@ -53,22 +81,15 @@ function hasPolicy(config, name) {
   );
 }
 
-// 按候选顺序选第一个可用策略；如果都不存在，则退回 candidates[0]
 function selectPolicy(config, candidates, fallback = "REJECT") {
-  return (
-    candidates.find((name) => hasPolicy(config, name)) ||
-    candidates[0] ||
-    fallback
-  );
+  return candidates.find((name) => hasPolicy(config, name)) || fallback;
 }
 
-// 写入或更新 rule-provider
 function setRuleProvider(config, name, provider) {
   const providers = ensureObject(config, "rule-providers");
   providers[name] = { ...(providers[name] || {}), ...provider };
 }
 
-// 前置规则：保持输入顺序 = 最终匹配顺序
 function prependRules(config, rules) {
   const currentRules = ensureArray(config, "rules");
   const newRules = rules.filter((rule) => !currentRules.includes(rule));
@@ -76,24 +97,12 @@ function prependRules(config, rules) {
 }
 
 /**
- * TODO: 唯一静态配置：手动维护自定义节点
- * 以后只改这里，其他配置项会动态引用这些节点名
- */
-const customProxies = [
-  {
-    name: "🇺🇸 美国家宽",
-    xxxx,
-  },
-];
-
-/**
- * NOTE: 动态生成的策略组模板
- * 这些组会自动包含 customProxies 中的节点名
+ * 动态生成的策略组模板
  */
 const groupTemplates = ["🟩SECUS", "Proxies", "US"];
 
 /**
- * 动态注入的 rule-providers
+ * 规则集
  */
 const ruleProviders = {
   Paypal: {
@@ -175,6 +184,87 @@ const ruleProviders = {
   },
 };
 
+const AI_RULESETS = ["Gemini", "Paypal", "Openai", "Claude"];
+const COMMON_RULESETS = ["Twitter", "Adobe"];
+
+const DNS_CONSTANTS = {
+  FORCE_DOMAIN: [
+    "+.openai.com",
+    "+.chat.com",
+    "+.chatgpt.com",
+    "+.oaistatic.com",
+    "+.oaiusercontent.com",
+    "+.sora.com",
+    "+.anthropic.com",
+    "+.claude.ai",
+    "+.claude.com",
+    "+.claudeusercontent.com",
+    "+.gemini.google.com",
+    "+.aistudio.google.com",
+    "+.generativelanguage.googleapis.com",
+    "+.makersuite.google.com",
+    "+.notebooklm.google.com",
+  ],
+
+  BASIC_FAKE_IP_FILTER: [
+    "*.lan",
+    "+.lan",
+    "*.local",
+    "+.local",
+    "+.localdomain",
+    "+.home.arpa",
+    "+.msftconnecttest.com",
+    "+.msftncsi.com",
+    "www.msftconnecttest.com",
+    "connectivitycheck.gstatic.com",
+    "+.captive.apple.com",
+    "time.*.com",
+    "time.*.gov",
+    "ntp.*.com",
+    "ntp.*.org",
+    "pool.ntp.org",
+    "+.pool.ntp.org",
+    "+.stun.*.*",
+    "+.stun.*.*.*",
+    "+.stun.*.*.*.*",
+    "localhost.ptlogin2.qq.com",
+    "WORKGROUP",
+  ],
+
+  /**
+   * 强约束 bootstrap：
+   * 不混入国外 DNS / DoH
+   */
+  DEFAULT_NAMESERVER: ["223.5.5.5", "119.29.29.29"],
+
+  /**
+   * 强约束直连 DNS：
+   * 只允许国内 DNS 参与直连解析
+   */
+  DIRECT_NAMESERVER: ["223.5.5.5#DIRECT", "119.29.29.29#DIRECT"],
+
+  /**
+   * 代理主链路解析器
+   */
+  PROXY_DOH: ["https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query"],
+};
+
+// ====================
+// 3) 业务构造
+// ====================
+
+function getCustomProxyNames() {
+  return customProxies.map((item) => item.name).filter(Boolean);
+}
+
+function buildGroups(proxyNames) {
+  return groupTemplates.map((name) => ({
+    name,
+    type: "select",
+    proxies: [...proxyNames, "REJECT"],
+  }));
+}
+
 // 固定优先级的前置规则模板
 function buildPrependRules(secUSPolicy, commonPolicy) {
   return [
@@ -212,23 +302,154 @@ function buildPrependRules(secUSPolicy, commonPolicy) {
   ];
 }
 
-function getCustomProxyNames() {
-  return customProxies.map((item) => item.name);
+function resolvePolicies(config) {
+  return {
+    secUSPolicy: selectPolicy(
+      config,
+      ["🟩SECUS", "Final", "Proxies"],
+      "REJECT",
+    ),
+    commonPolicy: selectPolicy(config, ["Proxies", "Final"], "REJECT"),
+  };
 }
 
-function buildGroups(proxyNames) {
-  return groupTemplates.map((name) => ({
-    name,
-    type: "select",
-    proxies: [...proxyNames, "REJECT"],
-  }));
+function buildAiNameserverPolicy(policyName) {
+  const entries = {};
+  for (const name of AI_RULESETS) {
+    entries[`rule-set:${name}`] = DNS_CONSTANTS.PROXY_DOH.map(
+      (dns) => `${dns}#${policyName}`,
+    );
+  }
+  return entries;
 }
+
+// ====================
+// 4) 网络配置注入
+// ====================
+
+function applyTunConfig(config) {
+  ensureObject(config, "tun");
+  config.tun = {
+    ...config.tun,
+    enable: true,
+    stack: "system",
+    "auto-route": true,
+    "auto-detect-interface": true,
+    "strict-route": true,
+    "dns-hijack": ["any:53", "tcp://any:53"],
+  };
+}
+
+function applySnifferConfig(config) {
+  ensureObject(config, "sniffer");
+
+  const currentForceDomain = Array.isArray(config.sniffer["force-domain"])
+    ? config.sniffer["force-domain"]
+    : [];
+
+  config.sniffer = {
+    ...config.sniffer,
+    enable: true,
+    "force-dns-mapping": true,
+    "parse-pure-ip": true,
+    "override-destination": true,
+    sniff: {
+      HTTP: { ports: [80, "8080-8880"], "override-destination": true },
+      TLS: { ports: [443, 8443] },
+      QUIC: { ports: [443, 8443] },
+      ...(config.sniffer.sniff || {}),
+    },
+    "force-domain": uniq([
+      ...currentForceDomain,
+      ...DNS_CONSTANTS.FORCE_DOMAIN,
+    ]),
+  };
+}
+
+function applyDnsConfig(config, policies) {
+  ensureObject(config, "dns");
+
+  const currentFakeIpFilter = Array.isArray(config.dns["fake-ip-filter"])
+    ? config.dns["fake-ip-filter"]
+    : [];
+
+  const currentIpv6 =
+    typeof config.dns.ipv6 === "boolean" ? config.dns.ipv6 : true;
+
+  config.dns = {
+    ...config.dns,
+    enable: true,
+    listen: config.dns.listen || ":53",
+    ipv6: currentIpv6,
+    "cache-algorithm": "arc",
+    "enhanced-mode": "fake-ip",
+    "fake-ip-range": config.dns["fake-ip-range"] || "198.18.0.1/16",
+    "fake-ip-filter-mode": config.dns["fake-ip-filter-mode"] || "blacklist",
+    "prefer-h3": false,
+    "respect-rules": true,
+    "use-hosts": false,
+    "use-system-hosts": false,
+    ipv6: currentIpv6,
+
+    "fake-ip-filter": uniq([
+      ...currentFakeIpFilter,
+      ...DNS_CONSTANTS.BASIC_FAKE_IP_FILTER,
+    ]),
+
+    // bootstrap DNS：只允许国内 DNS
+    "default-nameserver": DNS_CONSTANTS.DEFAULT_NAMESERVER,
+
+    // 默认 DNS：只允许代理 DoH 参与主解析链路
+    nameserver: DNS_CONSTANTS.PROXY_DOH.map(
+      (dns) => `${dns}#${policies.commonPolicy}`,
+    ),
+
+    // 域名 / 规则分流到指定 DNS
+    "nameserver-policy": {
+      ...(config.dns["nameserver-policy"] || {}),
+      "geosite:cn": DNS_CONSTANTS.DIRECT_NAMESERVER,
+      "geosite:private": DNS_CONSTANTS.DIRECT_NAMESERVER,
+      ...buildAiNameserverPolicy(policies.secUSPolicy),
+    },
+
+    // fallback 保留 Verge 默认结构，但不实际启用 fallback 解析器
+    "fallback-filter": {
+      geoip: true,
+      "geoip-code": "CN",
+      ipcidr: ["240.0.0.0/4", "0.0.0.0/32"],
+      domain: ["+.google.com", "+.facebook.com", "+.youtube.com"],
+    },
+
+    fallback: [],
+
+    // 代理节点解析：只允许受控直连 DNS
+    "proxy-server-nameserver": uniq([...DNS_CONSTANTS.DIRECT_NAMESERVER]),
+
+    // 直连流量解析：只允许受控直连 DNS
+    "direct-nameserver": uniq([...DNS_CONSTANTS.DIRECT_NAMESERVER]),
+
+    "direct-nameserver-follow-policy": true,
+  };
+}
+
+function applyNetworkConfig(config, policies) {
+  applyTunConfig(config);
+  applySnifferConfig(config);
+  applyDnsConfig(config, policies);
+}
+
+// ====================
+// 5) 主流程
+// ====================
 
 function main(config) {
   ensureArray(config, "proxies");
   ensureArray(config, "proxy-groups");
   ensureArray(config, "rules");
   ensureObject(config, "rule-providers");
+  ensureObject(config, "dns");
+  ensureObject(config, "tun");
+  ensureObject(config, "sniffer");
 
   // 1. 注入自定义节点（唯一静态来源）
   customProxies.forEach((proxy) => addNamed(config.proxies, proxy));
@@ -244,12 +465,17 @@ function main(config) {
     setRuleProvider(config, name, provider);
   });
 
-  // 4. NOTE: 动态选择规则目标
-  const secUSPolicy = selectPolicy(config, ["🟩SECUS", "Final", "Proxies"]);
-  const commonPolicy = selectPolicy(config, ["Proxies", "Final"]);
+  // 4. 统一解析策略，只算一次
+  const policies = resolvePolicies(config);
 
   // 5. 动态注入前置规则
-  prependRules(config, buildPrependRules(secUSPolicy, commonPolicy));
+  prependRules(
+    config,
+    buildPrependRules(policies.secUSPolicy, policies.commonPolicy),
+  );
+
+  // 6. 注入网络配置（TUN / Sniffer / DNS）
+  applyNetworkConfig(config, policies);
 
   return config;
 }
