@@ -124,6 +124,13 @@ const ruleProviders = {
     path: "./rules/Claude.yaml",
     interval: 86400,
   },
+  Twitter: {
+    type: "http",
+    behavior: "classical",
+    url: "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/refs/heads/master/rule/Clash/Twitter/Twitter.yaml",
+    path: "./rules/Twitter.yaml",
+    interval: 86400,
+  },
   Adobe: {
     type: "http",
     behavior: "classical",
@@ -198,6 +205,7 @@ function buildPrependRules(secUSPolicy, commonPolicy) {
     "RULE-SET,ProgramAD,REJECT",
 
     // 通用分流
+    `RULE-SET,Twitter,${commonPolicy}`,
     `DOMAIN-SUFFIX,io,${commonPolicy}`,
     `DOMAIN-SUFFIX,steampowered.com,${commonPolicy}`,
     `RULE-SET,Adobe,${commonPolicy}`,
