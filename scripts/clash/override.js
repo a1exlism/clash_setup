@@ -11,12 +11,14 @@
 // ====================
 
 /**
- * NOTE: 如需静态注入节点，在这里填写
- * 默认留空，可直接运行
+ * NOTE: 通用动态节点补充池
+ * - 会参与地区自动识别
+ * - 会进入 HK/JP/SG/TW/US/MISC -> Proxies 链路
+ * - 也可作为 tmp 的动态来源
  */
 const customProxies = [
   // {
-  //   name: "🇺🇸 美国家宽",
+  //   name: "🇯🇵 日本 01",
   //   type: "ss",
   //   server: "1.2.3.4",
   //   port: 443,
@@ -25,6 +27,66 @@ const customProxies = [
   //   udp: true
   // }
 ];
+
+/**
+ * NOTE: 独立 SECUS 节点池
+ * - 仅进入 🟩SECUS
+ * - 不参与动态地区分组
+ * - 不参与 tmp 动态来源
+ */
+const customSecUSProxies = [
+  // {
+  //   name: "🟩SECUS 家宽",
+  //   type: "ss",
+  //   server: "1.2.3.4",
+  //   port: 443,
+  //   cipher: "aes-128-gcm",
+  //   password: "password",
+  //   udp: true
+  // }
+];
+
+/**
+ * NOTE: tmp 节点来源地区
+ * - 留空：表示自动合并全部动态地区 bucket（推荐默认）
+ * - 如需限制，可填写 ["HK", "JP"] 等
+ */
+const TMP_SOURCE_REGIONS = [];
+
+const REGION_ORDER = ["HK", "JP", "SG", "TW", "US", "MISC"];
+const DISPLAY_REGION_ORDER = ["HK", "US", "JP", "SG", "TW", "MISC"];
+const CORE_GROUP_DISPLAY_ORDER = ["Proxies", "🟩SECUS", "tmp"];
+const AI_POLICY_KEYWORDS = [
+  "openai",
+  "chatgpt",
+  "claude",
+  "gemini",
+  "cursor",
+  "copilot",
+  "sora",
+  "anthropic",
+  "ai",
+];
+
+const REGION_PATTERNS = {
+  HK: [/(?:^|\s)HK(?:\s|$)/i, /HONG\s*KONG/i, /香港/],
+  JP: [/(?:^|\s)JP(?:\s|$)/i, /JAPAN/i, /日本|东京|大阪/],
+  SG: [/(?:^|\s)SG(?:\s|$)/i, /SINGAPORE/i, /新加坡/],
+  TW: [/(?:^|\s)TW(?:\s|$)/i, /TAIWAN/i, /台湾|台北/],
+  US: [
+    /(?:^|\s)US(?:\s|$)/i,
+    /(?:^|\s)USA(?:\s|$)/i,
+    /UNITED\s*STATES/i,
+    /AMERICA/i,
+    /美国|洛杉矶|纽约|西雅图|硅谷|圣何塞/,
+  ],
+  MISC: [
+    /(?:^|\s)MISC(?:\s|$)/i,
+    /(?:^|\s)OTHER(?:\s|$)/i,
+    /GLOBAL/i,
+    /其他|杂项/,
+  ],
+};
 
 // ====================
 // 2) 通用工具
@@ -68,7 +130,7 @@ function upsertGroup(list, group) {
   list[index] = {
     ...current,
     ...group,
-    proxies: uniq([...(current.proxies || []), ...(group.proxies || [])]),
+    proxies: uniq(group.proxies || []),
   };
 }
 
@@ -96,14 +158,33 @@ function prependRules(config, rules) {
   config.rules = [...newRules, ...currentRules];
 }
 
-/**
- * 动态生成的策略组模板
- */
-const groupTemplates = ["🟩SECUS", "Proxies", "US"];
+function normalizeProxyName(name = "") {
+  return String(name)
+    .normalize("NFKC")
+    .replace(/[\uD83C][\uDDE6-\uDDFF]/g, " ")
+    .replace(/[()\[\]{}【】|]+/g, " ")
+    .replace(/[._\-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
-/**
- * 规则集
- */
+function detectRegion(name = "") {
+  const normalized = normalizeProxyName(name);
+
+  for (const region of REGION_ORDER) {
+    const patterns = REGION_PATTERNS[region] || [];
+    if (patterns.some((pattern) => pattern.test(normalized))) {
+      return region;
+    }
+  }
+
+  return "MISC";
+}
+
+// ====================
+// 3) 规则集与业务构造
+// ====================
+
 const ruleProviders = {
   Paypal: {
     type: "http",
@@ -185,7 +266,6 @@ const ruleProviders = {
 };
 
 const AI_RULESETS = ["Gemini", "Paypal", "Openai", "Claude"];
-const COMMON_RULESETS = ["Twitter", "Adobe"];
 
 const DNS_CONSTANTS = {
   FORCE_DOMAIN: [
@@ -249,20 +329,82 @@ const DNS_CONSTANTS = {
   PROXY_DOH: ["https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query"],
 };
 
-// ====================
-// 3) 业务构造
-// ====================
-
-function getCustomProxyNames() {
-  return customProxies.map((item) => item.name).filter(Boolean);
+function getNamedProxyNames(list) {
+  return uniq(list.map((item) => item?.name).filter(Boolean));
 }
 
-function buildGroups(proxyNames) {
-  return groupTemplates.map((name) => ({
-    name,
+function getSecUSProxyNames() {
+  return getNamedProxyNames(customSecUSProxies);
+}
+
+function getDynamicProxyNames(config) {
+  const secUSNames = new Set(getSecUSProxyNames());
+  return uniq(
+    (config.proxies || [])
+      .map((item) => item?.name)
+      .filter((name) => name && !secUSNames.has(name)),
+  );
+}
+
+function buildRegionBuckets(proxyNames) {
+  const buckets = Object.fromEntries(
+    REGION_ORDER.map((region) => [region, []]),
+  );
+
+  for (const proxyName of proxyNames) {
+    const region = detectRegion(proxyName);
+    buckets[region].push(proxyName);
+  }
+
+  for (const region of REGION_ORDER) {
+    buckets[region] = uniq(buckets[region]);
+  }
+
+  return buckets;
+}
+
+function buildRegionGroups(regionBuckets) {
+  return REGION_ORDER.map((region) => ({
+    name: region,
     type: "select",
-    proxies: [...proxyNames, "REJECT"],
+    proxies: uniq([...(regionBuckets[region] || []), "REJECT"]),
   }));
+}
+
+function buildProxiesGroup(regionBuckets) {
+  const availableRegionGroups = REGION_ORDER.filter(
+    (region) => (regionBuckets[region] || []).length > 0,
+  );
+
+  return {
+    name: "Proxies",
+    type: "select",
+    proxies: uniq([...availableRegionGroups, "REJECT"]),
+  };
+}
+
+function buildTmpGroup(regionBuckets) {
+  const sourceRegions = TMP_SOURCE_REGIONS.length
+    ? TMP_SOURCE_REGIONS.filter((region) => REGION_ORDER.includes(region))
+    : REGION_ORDER;
+
+  const proxyNames = uniq(
+    sourceRegions.flatMap((region) => regionBuckets[region] || []),
+  );
+
+  return {
+    name: "tmp",
+    type: "select",
+    proxies: uniq([...proxyNames, "REJECT"]),
+  };
+}
+
+function buildSecUSGroup() {
+  return {
+    name: "🟩SECUS",
+    type: "select",
+    proxies: uniq([...getSecUSProxyNames(), "REJECT"]),
+  };
 }
 
 // 固定优先级的前置规则模板
@@ -304,11 +446,7 @@ function buildPrependRules(secUSPolicy, commonPolicy) {
 
 function resolvePolicies(config) {
   return {
-    secUSPolicy: selectPolicy(
-      config,
-      ["🟩SECUS", "Final", "Proxies"],
-      "REJECT",
-    ),
+    secUSPolicy: selectPolicy(config, ["🟩SECUS"], "REJECT"),
     commonPolicy: selectPolicy(config, ["Proxies", "Final"], "REJECT"),
   };
 }
@@ -321,6 +459,66 @@ function buildAiNameserverPolicy(policyName) {
     );
   }
   return entries;
+}
+
+function isFinalGroupName(name = "") {
+  return /^final$/i.test(String(name).trim());
+}
+
+function isAiPolicyGroupName(name = "") {
+  const normalized = String(name).toLowerCase();
+
+  if (!normalized) return false;
+  if (REGION_ORDER.includes(name)) return false;
+  if (DISPLAY_REGION_ORDER.includes(name)) return false;
+  if (CORE_GROUP_DISPLAY_ORDER.includes(name)) return false;
+  if (name === "🟩SECUS" || name === "tmp" || name === "Proxies") return false;
+  if (isFinalGroupName(name)) return false;
+
+  return AI_POLICY_KEYWORDS.some((keyword) => normalized.includes(keyword));
+}
+
+function reorderProxyGroups(config) {
+  const groups = ensureArray(config, "proxy-groups");
+  const groupsByName = new Map(groups.map((group) => [group?.name, group]));
+  const consumed = new Set();
+  const ordered = [];
+
+  function pushByName(name) {
+    if (!groupsByName.has(name) || consumed.has(name)) return;
+    ordered.push(groupsByName.get(name));
+    consumed.add(name);
+  }
+
+  DISPLAY_REGION_ORDER.forEach(pushByName);
+  CORE_GROUP_DISPLAY_ORDER.forEach(pushByName);
+
+  for (const group of groups) {
+    const name = group?.name;
+    if (!name || consumed.has(name)) continue;
+    if (isAiPolicyGroupName(name)) {
+      ordered.push(group);
+      consumed.add(name);
+    }
+  }
+
+  for (const group of groups) {
+    const name = group?.name;
+    if (!name || consumed.has(name) || isFinalGroupName(name)) continue;
+    ordered.push(group);
+    consumed.add(name);
+  }
+
+  for (const group of groups) {
+    const name = group?.name;
+    if (!name || consumed.has(name)) continue;
+    if (isFinalGroupName(name)) {
+      ordered.push(group);
+      consumed.add(name);
+    }
+  }
+
+  config["proxy-groups"] = ordered;
 }
 
 // ====================
@@ -389,7 +587,6 @@ function applyDnsConfig(config, policies) {
     "respect-rules": true,
     "use-hosts": false,
     "use-system-hosts": false,
-    ipv6: currentIpv6,
 
     "fake-ip-filter": uniq([
       ...currentFakeIpFilter,
@@ -400,6 +597,7 @@ function applyDnsConfig(config, policies) {
     "default-nameserver": DNS_CONSTANTS.DEFAULT_NAMESERVER,
 
     // 默认 DNS：只允许代理 DoH 参与主解析链路
+    // tmp 不单独定义 nameserver-policy，而是复用 commonPolicy 对应的通用 DNS
     nameserver: DNS_CONSTANTS.PROXY_DOH.map(
       (dns) => `${dns}#${policies.commonPolicy}`,
     ),
@@ -451,30 +649,40 @@ function main(config) {
   ensureObject(config, "tun");
   ensureObject(config, "sniffer");
 
-  // 1. 注入自定义节点（唯一静态来源）
+  // 1. 注入自定义节点
   customProxies.forEach((proxy) => addNamed(config.proxies, proxy));
+  customSecUSProxies.forEach((proxy) => addNamed(config.proxies, proxy));
 
-  // 2. 动态注入 / 合并策略组
-  const customProxyNames = getCustomProxyNames();
-  buildGroups(customProxyNames).forEach((group) => {
+  // 2. 构建动态地区桶（仅服务 Proxies / tmp 链）
+  const dynamicProxyNames = getDynamicProxyNames(config);
+  const regionBuckets = buildRegionBuckets(dynamicProxyNames);
+
+  // 3. 动态注入 / 合并策略组
+  buildRegionGroups(regionBuckets).forEach((group) => {
     upsertGroup(config["proxy-groups"], group);
   });
+  upsertGroup(config["proxy-groups"], buildProxiesGroup(regionBuckets));
+  upsertGroup(config["proxy-groups"], buildTmpGroup(regionBuckets));
+  upsertGroup(config["proxy-groups"], buildSecUSGroup());
 
-  // 3. 动态注入 rule-providers
+  // 4. 统一重排策略组顺序（仅影响 GUI 展示顺序，不影响分流语义）
+  reorderProxyGroups(config);
+
+  // 5. 动态注入 rule-providers
   Object.entries(ruleProviders).forEach(([name, provider]) => {
     setRuleProvider(config, name, provider);
   });
 
-  // 4. 统一解析策略，只算一次
+  // 6. 统一解析策略，只算一次
   const policies = resolvePolicies(config);
 
-  // 5. 动态注入前置规则
+  // 7. 动态注入前置规则
   prependRules(
     config,
     buildPrependRules(policies.secUSPolicy, policies.commonPolicy),
   );
 
-  // 6. 注入网络配置（TUN / Sniffer / DNS）
+  // 8. 注入网络配置（TUN / Sniffer / DNS）
   applyNetworkConfig(config, policies);
 
   return config;
