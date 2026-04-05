@@ -54,6 +54,18 @@ const customSecUSProxies = [
 const tmpSourceRegions = [];
 
 /**
+ * NOTE: TUN 路由层绕过网段
+ * - 这些网段将直接绕过 mihomo TUN，不再进入代理栈
+ * - 用于规避 2.4.x 对局域网访问的回归问题
+ * - 建议至少保留 RFC1918 私网段
+ */
+const tunRouteExcludeAddress = [
+  "10.0.0.0/8",
+  "172.16.0.0/12",
+  "192.168.0.0/16",
+];
+
+/**
  * 地区识别顺序：
  * - 用于节点名称归类
  * - 与 GUI 展示顺序分离
@@ -151,6 +163,21 @@ function addNamed(list, item) {
   if (!list.some((x) => x?.name === item.name)) {
     list.push(item);
   }
+}
+
+/**
+ * 兼容 kebab-case / camelCase 两种字段名
+ * - Clash/Mihomo 配置实际使用 kebab-case
+ * - 某些脚本或运行时对象可能带 camelCase
+ */
+function readConfigList(obj, kebabKey, camelKey) {
+  const kebabValue = obj?.[kebabKey];
+  if (Array.isArray(kebabValue)) return kebabValue;
+
+  const camelValue = obj?.[camelKey];
+  if (Array.isArray(camelValue)) return camelValue;
+
+  return [];
 }
 
 /**
@@ -571,6 +598,10 @@ function buildFinalGroup() {
  * 前置规则：
  * - 不在这里插入 MATCH,Final
  * - MATCH,Final 统一由 appendTrailingRule 放到规则尾部，避免吞掉订阅原有后续规则
+ *
+ * NOTE:
+ * - 这里的私网 DIRECT 规则仍然保留
+ * - 但当前更关键的是 tun.route-exclude-address，它优先于规则层
  */
 function buildPrependRules(commonPolicy) {
   return [
@@ -702,6 +733,18 @@ function reorderProxyGroups(config) {
 
 function applyTunConfig(config) {
   ensureObject(config, "tun");
+
+  const currentRouteExcludeAddress = readConfigList(
+    config.tun,
+    "route-exclude-address",
+    "routeExcludeAddress",
+  );
+
+  const mergedRouteExcludeAddress = uniq([
+    ...currentRouteExcludeAddress,
+    ...tunRouteExcludeAddress,
+  ]);
+
   config.tun = {
     ...config.tun,
     enable: true,
@@ -710,6 +753,14 @@ function applyTunConfig(config) {
     "auto-detect-interface": true,
     "strict-route": true,
     "dns-hijack": ["any:53", "tcp://any:53"],
+
+    /**
+     * 关键优化：
+     * - 直接在路由层绕过 RFC1918 私网段
+     * - 避免局域网流量进入 TUN 后再命中 DIRECT
+     * - 这是当前针对 CVR 2.4.x 内网访问异常的主要 workaround
+     */
+    "route-exclude-address": mergedRouteExcludeAddress,
   };
 }
 
