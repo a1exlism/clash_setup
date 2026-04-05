@@ -1,0 +1,81 @@
+# ==============================
+# Clash Verge Static Override
+# ==============================
+
+profile:
+  store-selected: true
+
+rules:
+  # =========================================
+  # 1. PROCESS RULES（进程级分流）
+  # =========================================
+  # 用于“整个应用”强制走某个策略
+
+  # ---- Tmp：临时出口 ----
+  - PROCESS-NAME,telegram.exe,Tmp
+  - PROCESS-NAME,discord.exe,Tmp
+  - PROCESS-NAME,notion.exe,Tmp
+
+  # ---- SecUS：风控隔离出口 ----
+  - PROCESS-NAME,cursor.exe,🟩SecUS
+  - PROCESS-NAME,chrome.exe,🟩SecUS
+  - PROCESS-NAME,msedge.exe,🟩SecUS
+
+  # ---- DIRECT：本地软件 ----
+  - PROCESS-NAME,WeChat.exe,DIRECT
+  - PROCESS-NAME,WXWork.exe,DIRECT
+
+  # =========================================
+  # 2. TMP RULES（临时分流）
+  # =========================================
+  # 用于测试 / 灰度 / 特定业务隔离
+
+  # ---- 域名后缀 ----
+  - DOMAIN-SUFFIX,example.com,Tmp
+  - DOMAIN-SUFFIX,example.net,Tmp
+
+  # ---- 关键词 ----
+  - DOMAIN-KEYWORD,test-env,Tmp
+  - DOMAIN-KEYWORD,staging,Tmp
+
+  # ---- 精确域名 ----
+  - DOMAIN,api.example.com,Tmp
+  - DOMAIN,download.example.com,Tmp
+
+  # ---- IP ----
+  - IP-CIDR,203.0.113.0/24,Tmp,no-resolve
+  - IP-CIDR,198.51.100.10/32,Tmp,no-resolve
+
+  # =========================================
+  # 3. SECUS RULES（强约束流量）
+  # =========================================
+  # 用于 AI / 风控 / 指纹敏感业务
+
+  # ---- AI 扩展 ----
+  - DOMAIN-SUFFIX,openrouter.ai,🟩SecUS
+  - DOMAIN-SUFFIX,poe.com,🟩SecUS
+  - DOMAIN-SUFFIX,perplexity.ai,🟩SecUS
+
+  # ---- API / SaaS ----
+  - DOMAIN-SUFFIX,anthropic.com,🟩SecUS
+  - DOMAIN-SUFFIX,claudeusercontent.com,🟩SecUS
+
+  # ---- 自定义业务 ----
+  - DOMAIN,secure.example.com,🟩SecUS
+
+  # =========================================
+  # 4. DIRECT RULES（本地 / 内网）
+  # =========================================
+
+  # ---- 本地域名 ----
+  - DOMAIN-SUFFIX,lan,DIRECT
+  - DOMAIN-SUFFIX,local,DIRECT
+
+  # ---- 内网网段 ----
+  - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve
+  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve
+
+  # ---- 特定局域网设备 ----
+  - IP-CIDR,192.168.31.76/32,DIRECT,no-resolve
+  - IP-CIDR,192.168.1.19/32,DIRECT,no-resolve
