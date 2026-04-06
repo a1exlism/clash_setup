@@ -412,7 +412,6 @@ const ruleSetNames = {
   ad: "adRuleSet",
   easyList: "easyListRuleSet",
   easyListChina: "easyListChinaRuleSet",
-  easyPrivacy: "easyPrivacyRuleSet",
   programAd: "programAdRuleSet",
 };
 
@@ -515,13 +514,6 @@ const ruleSetProviders = {
     behavior: "domain",
     url: "https://raw.githubusercontent.com/earoftoast/clash-rules/main/EasyListChina.yaml",
     path: "./rules/EasyListChina.yaml",
-    interval: 86400,
-  },
-  [ruleSetNames.easyPrivacy]: {
-    type: "http",
-    behavior: "domain",
-    url: "https://raw.githubusercontent.com/earoftoast/clash-rules/main/EasyPrivacy.yaml",
-    path: "./rules/EasyPrivacy.yaml",
     interval: 86400,
   },
   [ruleSetNames.programAd]: {
@@ -796,7 +788,6 @@ function buildPrependRules(commonPolicy) {
     `RULE-SET,${ruleSetNames.ad},REJECT`,
     `RULE-SET,${ruleSetNames.easyList},REJECT`,
     `RULE-SET,${ruleSetNames.easyListChina},REJECT`,
-    `RULE-SET,${ruleSetNames.easyPrivacy},REJECT`,
     `RULE-SET,${ruleSetNames.programAd},REJECT`,
 
     // 国内域名 / IP 兜底直连，避免常见国内站点落到 Final
