@@ -128,11 +128,13 @@ rules:
 - `OpenAI` / `Gemini` / `Microsoft` / `PayPal` / `Twitter` / `Google` 服务组默认首选 `US`
 - 候选顺序为：`US -> Proxies -> 其他地区 -> LOW -> REJECT`
 - 内部 `rule-provider` 名与服务组名已解耦，例如 `RULE-SET,googleRuleSet,Google`
+- 脚本已内置 `cnDomainRuleSet` / `cnIpRuleSet -> DIRECT`，用于让常见国内站点优先直连，不再轻易落到 `Final`
 
 👉 不建议重复写：
 
 ```yaml
 - DOMAIN-SUFFIX,anthropic.com,SecUS🟩 # ❌ Claude 相关已内置
+- DOMAIN-SUFFIX,qq.com,DIRECT         # ❌ 常见国内站点优先由 cn rule-set 兜底
 ```
 
 ---

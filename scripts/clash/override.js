@@ -398,6 +398,8 @@ function applySecUSClientFingerprint(proxy) {
  * - provider 统一使用 camelCase + RuleSet 后缀
  */
 const ruleSetNames = {
+  cnDomain: "cnDomainRuleSet",
+  cnIp: "cnIpRuleSet",
   payPal: "payPalRuleSet",
   gemini: "geminiRuleSet",
   microsoft: "microsoftRuleSet",
@@ -415,6 +417,22 @@ const ruleSetNames = {
 };
 
 const ruleSetProviders = {
+  [ruleSetNames.cnDomain]: {
+    type: "http",
+    behavior: "domain",
+    format: "mrs",
+    url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/cn.mrs",
+    path: "./rules/cnDomain.mrs",
+    interval: 86400,
+  },
+  [ruleSetNames.cnIp]: {
+    type: "http",
+    behavior: "ipcidr",
+    format: "mrs",
+    url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geoip/cn.mrs",
+    path: "./rules/cnIp.mrs",
+    interval: 86400,
+  },
   [ruleSetNames.payPal]: {
     type: "http",
     behavior: "classical",
@@ -780,6 +798,10 @@ function buildPrependRules(commonPolicy) {
     `RULE-SET,${ruleSetNames.easyListChina},REJECT`,
     `RULE-SET,${ruleSetNames.easyPrivacy},REJECT`,
     `RULE-SET,${ruleSetNames.programAd},REJECT`,
+
+    // 国内域名 / IP 兜底直连，避免常见国内站点落到 Final
+    `RULE-SET,${ruleSetNames.cnDomain},DIRECT`,
+    `RULE-SET,${ruleSetNames.cnIp},DIRECT`,
 
     `RULE-SET,${ruleSetNames.adobe},${commonPolicy}`,
   ];
