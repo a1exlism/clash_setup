@@ -12,18 +12,20 @@ rules:
   # 用于“整个应用”强制走某个策略
 
   # ---- Tmp：临时出口 ----
-  - PROCESS-NAME,telegram.exe,Tmp
-  - PROCESS-NAME,discord.exe,Tmp
-  - PROCESS-NAME,notion.exe,Tmp
+  - PROCESS-NAME,HillsLite.exe,HK
+  - PROCESS-NAME,HillsPlayer.exe,HK
 
-  # ---- SecUS：风控隔离出口 ----
-  - PROCESS-NAME,cursor.exe,🟩SecUS
-  - PROCESS-NAME,chrome.exe,🟩SecUS
-  - PROCESS-NAME,msedge.exe,🟩SecUS
+  # ---- Proxies ----
+  - PROCESS-NAME,cursor.exe,US
+
+  # ---- SecUS🟩：风控隔离出口 ----
+  - PROCESS-NAME,brave.exe,SecUS🟩
 
   # ---- DIRECT：本地软件 ----
-  - PROCESS-NAME,WeChat.exe,DIRECT
+  - PROCESS-NAME,Weixin.exe,DIRECT
+  - PROCESS-NAME,WeChatAppEx.exe,DIRECT
   - PROCESS-NAME,WXWork.exe,DIRECT
+  - PROCESS-NAME,GameViewerServer.exe,DIRECT
 
   # =========================================
   # 2. TMP RULES（临时分流）
@@ -51,20 +53,34 @@ rules:
   # =========================================
   # 用于 AI / 风控 / 指纹敏感业务
 
-  # ---- AI 扩展 ----
-  - DOMAIN-SUFFIX,openrouter.ai,🟩SecUS
-  - DOMAIN-SUFFIX,poe.com,🟩SecUS
-  - DOMAIN-SUFFIX,perplexity.ai,🟩SecUS
-
-  # ---- API / SaaS ----
-  - DOMAIN-SUFFIX,anthropic.com,🟩SecUS
-  - DOMAIN-SUFFIX,claudeusercontent.com,🟩SecUS
-
   # ---- 自定义业务 ----
-  - DOMAIN,secure.example.com,🟩SecUS
+  - DOMAIN,secure.example.com,SecUS🟩
 
   # =========================================
-  # 4. DIRECT RULES（本地 / 内网）
+  # 4. ADVANCED RULES（可选）
+  # =========================================
+  # 允许直接接入内部组，但不建议作为默认写法
+
+  # ---- 直接接入 Proxies ----
+  # - DOMAIN-SUFFIX,advanced-proxy.example,Proxies
+
+  # ---- 宽匹配规则（按需启用）----
+  # 建议仅在你明确接受宽匹配副作用时启用
+  - DOMAIN-SUFFIX,ai,US
+  - DOMAIN-KEYWORD,cursor,US
+  - DOMAIN-SUFFIX,io,Final
+  - DOMAIN-SUFFIX,work,Final
+  - DOMAIN-SUFFIX,steampowered.com,Final
+  - DOMAIN-SUFFIX,bilibili.com,DIRECT
+  
+  # ---- 本地软件 ----
+  - PROCESS-NAME,telegram.exe,Final
+
+  # ---- 直接接入 Final ----
+  # - DOMAIN-SUFFIX,advanced-final.example,Final
+
+  # =========================================
+  # 5. DIRECT RULES（本地 / 内网）
   # =========================================
 
   # ---- 本地域名 ----

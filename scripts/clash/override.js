@@ -1,6 +1,6 @@
 /**
  * global extension script
- * 强约束 DNS + 模块化结构版（方案 B）
+ * 强约束 DNS + 模块化结构版（SecUS / Claude 方案）
  * ==== WARNING ====
  * 必须禁用 设置 > Clash 设置 > DNS 覆写 功能，以保证配置文件覆写可用
  * ==== WARNING ====
@@ -30,19 +30,20 @@ const customProxies = [
 
 /**
  * NOTE: 独立 SecUS 节点池
- * - 仅进入 🟩SecUS
+ * - 仅进入 SecUS
  * - 不参与动态地区分组
  * - 不参与 Tmp 动态来源
+ * - vmess/vless/trojan/anytls 如未显式设置 client-fingerprint，脚本默认补为 chrome
  */
 const customSecUSProxies = [
   // {
-  //   name: "🟩SecUS 家宽",
-  //   type: "ss",
+  //   name: "SecUS-AnyTLS-01",
+  //   type: "anytls",
   //   server: "1.2.3.4",
   //   port: 443,
-  //   cipher: "aes-128-gcm",
   //   password: "password",
-  //   udp: true
+  //   udp: true,
+  //   "client-fingerprint": "chrome"
   // }
 ];
 
@@ -81,13 +82,32 @@ const displayRegionOrder = ["HK", "US", "JP", "SG", "TW", "MISC"];
  * GUI 中的核心组展示顺序
  * - 按你的要求，优先于 AI 服务组和地区组
  */
-const coreGroupDisplayOrder = ["Proxies", "🟩SecUS", "Tmp"];
+const secUSGroupName = "SecUS🟩";
+const coreGroupDisplayOrder = ["Proxies", secUSGroupName, "Tmp"];
+const extraSourceGroupDisplayOrder = ["LOW"];
 
 /**
- * GUI 中的 AI 服务组展示顺序
+ * GUI 中的服务入口组展示顺序
  * - 这些组是实际规则入口组，不是纯展示组
  */
-const aiServiceGroupOrder = ["OpenAI", "Claude", "Gemini", "PayPal"];
+const serviceGroupOrder = [
+  "OpenAI",
+  "Claude",
+  "Gemini",
+  "Microsoft",
+  "PayPal",
+  "Twitter",
+  "Google",
+];
+
+const usDefaultServiceGroupNames = new Set([
+  "OpenAI",
+  "Gemini",
+  "Microsoft",
+  "PayPal",
+  "Twitter",
+  "Google",
+]);
 
 /**
  * 用于识别“其他 AI 相关策略组”的关键字
@@ -97,7 +117,11 @@ const aiPolicyKeywords = [
   "openai",
   "chatgpt",
   "claude",
+  "secus",
   "gemini",
+  "google",
+  "microsoft",
+  "twitter",
   "cursor",
   "copilot",
   "sora",
@@ -107,16 +131,24 @@ const aiPolicyKeywords = [
 ];
 
 /**
- * 核心保留 AI 服务组的别名收敛映射
- * - 这里只处理 OpenAI / PayPal / Claude / Gemini
- * - 不处理 SecUS / Tmp，因为你明确说明外部订阅通常不会携带这些 group name
+ * 核心保留服务组的别名收敛映射
+ * - 这里只处理脚本主动维护的标准服务入口组
+ * - SecUS 主要用于吸收脚本历史输出或本地残留命名差异
+ * - 不处理 Tmp，因为外部订阅通常不会携带该 group name
  */
 const canonicalGroupNameMap = {
   openai: "OpenAI",
   paypal: "PayPal",
   claude: "Claude",
   gemini: "Gemini",
+  google: "Google",
+  microsoft: "Microsoft",
+  twitter: "Twitter",
+  secus: secUSGroupName,
 };
+
+const lowGroupName = "LOW";
+const lowProxyKeywords = ["实验性"];
 
 const regionPatterns = {
   HK: [/(?:^|\s)HK(?:\s|$)/i, /HONG\s*KONG/i, /香港/],
@@ -256,12 +288,12 @@ function normalizeGroupAliasKey(name = "") {
     .normalize("NFKC")
     .trim()
     .toLowerCase()
-    .replace(/[\s_-]+/g, "");
+    .replace(/[^a-z0-9]+/g, "");
 }
 
 /**
- * 核心 AI 服务组名称归一化：
- * - 只对 OpenAI / PayPal / Claude / Gemini 生效
+ * 核心服务组名称归一化：
+ * - 只对脚本主动维护的服务入口组生效
  * - 其他订阅组保持原样，避免误合并
  */
 function canonicalizeGroupName(name = "") {
@@ -274,7 +306,7 @@ function canonicalizeGroupName(name = "") {
 
 /**
  * 对订阅自带策略组做名称收敛：
- * - 主要解决 OpenAI / PayPal 等不同大小写或不同分隔符写法导致的重复组并存问题
+ * - 主要解决 OpenAI / Google / Twitter 等不同大小写或不同分隔符写法导致的重复组并存问题
  * - 同名收敛后会合并 proxy 列表
  */
 function normalizeExistingGroupNames(config) {
@@ -341,82 +373,140 @@ function detectRegion(name = "") {
   return "MISC";
 }
 
+function applySecUSClientFingerprint(proxy) {
+  if (!proxy || typeof proxy !== "object") return proxy;
+
+  const tlsFingerprintTypes = new Set(["vmess", "vless", "trojan", "anytls"]);
+  const proxyType = String(proxy.type || "").toLowerCase();
+
+  if (!tlsFingerprintTypes.has(proxyType)) return proxy;
+  if (proxy["client-fingerprint"]) return proxy;
+
+  return {
+    ...proxy,
+    "client-fingerprint": "chrome",
+  };
+}
+
 // ====================
 // 3) 规则集与业务构造
 // ====================
 
-const ruleProviders = {
-  PayPal: {
+/**
+ * 规则提供者命名约定：
+ * - provider 名与服务入口组名解耦，避免出现 RULE-SET,Google,Google 这类歧义写法
+ * - provider 统一使用 camelCase + RuleSet 后缀
+ */
+const ruleSetNames = {
+  payPal: "payPalRuleSet",
+  gemini: "geminiRuleSet",
+  microsoft: "microsoftRuleSet",
+  openAi: "openAiRuleSet",
+  claude: "claudeRuleSet",
+  claudeReject: "claudeRejectRuleSet",
+  google: "googleRuleSet",
+  twitter: "twitterRuleSet",
+  adobe: "adobeRuleSet",
+  ad: "adRuleSet",
+  easyList: "easyListRuleSet",
+  easyListChina: "easyListChinaRuleSet",
+  easyPrivacy: "easyPrivacyRuleSet",
+  programAd: "programAdRuleSet",
+};
+
+const ruleSetProviders = {
+  [ruleSetNames.payPal]: {
     type: "http",
     behavior: "classical",
     url: "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/refs/heads/master/rule/Clash/PayPal/PayPal.yaml",
     path: "./rules/PayPal.yaml",
     interval: 86400,
   },
-  Gemini: {
+  [ruleSetNames.gemini]: {
     type: "http",
     behavior: "classical",
     url: "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/Gemini/Gemini.yaml",
     path: "./rules/Gemini.yaml",
     interval: 86400,
   },
-  OpenAI: {
+  [ruleSetNames.microsoft]: {
+    type: "http",
+    behavior: "classical",
+    url: "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/Microsoft/Microsoft.yaml",
+    path: "./rules/Microsoft.yaml",
+    interval: 86400,
+  },
+  [ruleSetNames.openAi]: {
     type: "http",
     behavior: "classical",
     url: "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/OpenAI/OpenAI.yaml",
     path: "./rules/OpenAI.yaml",
     interval: 86400,
   },
-  Claude: {
+  [ruleSetNames.claude]: {
     type: "http",
     behavior: "classical",
-    url: "https://raw.githubusercontent.com/a1exlism/clash_setup/refs/heads/main/rules/clash/claude.yaml",
+    url: "https://raw.githubusercontent.com/a1exlism/clash_setup/refs/heads/main/rules/clash/Claude.yaml",
     path: "./rules/Claude.yaml",
     interval: 86400,
   },
-  Twitter: {
+  [ruleSetNames.claudeReject]: {
+    type: "http",
+    behavior: "classical",
+    url: "https://raw.githubusercontent.com/a1exlism/clash_setup/refs/heads/main/rules/clash/ClaudeReject.yaml",
+    path: "./rules/ClaudeReject.yaml",
+    interval: 86400,
+  },
+  [ruleSetNames.google]: {
+    type: "http",
+    behavior: "classical",
+    url: "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/Google/Google.yaml",
+    path: "./rules/Google.yaml",
+    interval: 86400,
+  },
+  [ruleSetNames.twitter]: {
     type: "http",
     behavior: "classical",
     url: "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/refs/heads/master/rule/Clash/Twitter/Twitter.yaml",
     path: "./rules/Twitter.yaml",
     interval: 86400,
   },
-  Adobe: {
+  [ruleSetNames.adobe]: {
     type: "http",
     behavior: "classical",
     url: "https://raw.githubusercontent.com/autocrusher/clash-rules/refs/heads/main/Adobe.list",
     path: "./rules/Adobe.yaml",
     interval: 86400,
   },
-  AD: {
+  [ruleSetNames.ad]: {
     type: "http",
     behavior: "domain",
     url: "https://raw.githubusercontent.com/earoftoast/clash-rules/main/AD.yaml",
     path: "./rules/AD.yaml",
     interval: 86400,
   },
-  EasyList: {
+  [ruleSetNames.easyList]: {
     type: "http",
     behavior: "domain",
     url: "https://raw.githubusercontent.com/earoftoast/clash-rules/main/EasyList.yaml",
     path: "./rules/EasyList.yaml",
     interval: 86400,
   },
-  EasyListChina: {
+  [ruleSetNames.easyListChina]: {
     type: "http",
     behavior: "domain",
     url: "https://raw.githubusercontent.com/earoftoast/clash-rules/main/EasyListChina.yaml",
     path: "./rules/EasyListChina.yaml",
     interval: 86400,
   },
-  EasyPrivacy: {
+  [ruleSetNames.easyPrivacy]: {
     type: "http",
     behavior: "domain",
     url: "https://raw.githubusercontent.com/earoftoast/clash-rules/main/EasyPrivacy.yaml",
     path: "./rules/EasyPrivacy.yaml",
     interval: 86400,
   },
-  ProgramAD: {
+  [ruleSetNames.programAd]: {
     type: "http",
     behavior: "domain",
     url: "https://raw.githubusercontent.com/earoftoast/clash-rules/main/ProgramAD.yaml",
@@ -425,8 +515,12 @@ const ruleProviders = {
   },
 };
 
-const aiRuleSets = ["Gemini", "PayPal", "OpenAI", "Claude"];
-
+/**
+ * DNS 基础默认值：
+ * - 这里只放 DNS 运行时默认值
+ * - 不放业务域名分流规则
+ * - 业务侧规则统一放到 rule-set 或静态覆写模板
+ */
 const dnsConstants = {
   forceDomain: [
     "+.openai.com",
@@ -446,6 +540,11 @@ const dnsConstants = {
     "+.notebooklm.google.com",
   ],
 
+  /**
+   * fake-ip 基础例外名单：
+   * - 仅保留本地网络、时钟同步、连通性探测等基础域名
+   * - 不承载业务域名规则
+   */
   basicFakeIpFilter: [
     "*.lan",
     "+.lan",
@@ -467,6 +566,7 @@ const dnsConstants = {
     "+.stun.*.*",
     "+.stun.*.*.*",
     "+.stun.*.*.*.*",
+    "clients*.google.com",
     "localhost.ptlogin2.qq.com",
     "WORKGROUP",
   ],
@@ -486,7 +586,7 @@ const dnsConstants = {
 
   /**
    * 代理主链路解析器：
-   * - 默认 nameserver 和 AI nameserver-policy 都基于它
+   * - 默认 fallback 和 SecUS nameserver-policy 都基于它
    */
   proxyDoh: ["https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query"],
 };
@@ -506,6 +606,10 @@ function getDynamicProxyNames(config) {
       .map((item) => item?.name)
       .filter((name) => name && !secUSNames.has(name)),
   );
+}
+
+function isLowProxyName(name = "") {
+  return lowProxyKeywords.some((keyword) => String(name).includes(keyword));
 }
 
 function buildRegionBuckets(proxyNames) {
@@ -531,6 +635,16 @@ function buildRegionGroups(regionBuckets) {
   }));
 }
 
+function buildLowGroup(proxyNames) {
+  const lowProxyNames = uniq(proxyNames.filter(isLowProxyName));
+
+  return {
+    name: lowGroupName,
+    type: "select",
+    proxies: uniq([...lowProxyNames, "REJECT"]),
+  };
+}
+
 function buildProxiesGroup(regionBuckets) {
   const availableRegionGroups = regionOrder.filter(
     (region) => (regionBuckets[region] || []).length > 0,
@@ -539,7 +653,7 @@ function buildProxiesGroup(regionBuckets) {
   return {
     name: "Proxies",
     type: "select",
-    proxies: uniq([...availableRegionGroups, "REJECT"]),
+    proxies: uniq([...availableRegionGroups, lowGroupName, "REJECT"]),
   };
 }
 
@@ -561,24 +675,62 @@ function buildTmpGroup(regionBuckets) {
 
 function buildSecUSGroup() {
   return {
-    name: "🟩SecUS",
+    name: secUSGroupName,
     type: "select",
     proxies: uniq([...getSecUSProxyNames(), "REJECT"]),
   };
 }
 
 /**
- * AI 服务入口组：
- * - 规则先命中服务组（OpenAI / Claude / Gemini / PayPal）
- * - 服务组默认再指向 🟩SecUS / REJECT
- * - 这样 GUI 展示与实际命中链一致
+ * 服务入口组：
+ * - 规则先命中服务组（OpenAI / Claude / Gemini / PayPal / Twitter / Google）
+ * - Claude 默认再指向 SecUS / REJECT
+ * - 其他服务组默认走首选 US 的地区代理链 / Proxies / REJECT
  */
-function buildAiServiceGroups() {
-  return aiServiceGroupOrder.map((groupName) => ({
-    name: groupName,
-    type: "select",
-    proxies: ["🟩SecUS", "REJECT"],
-  }));
+function buildServiceGroups(regionBuckets) {
+  const availableRegionGroups = displayRegionOrder.filter(
+    (region) => (regionBuckets[region] || []).length > 0,
+  );
+  const defaultCommonServiceTargets = uniq([
+    "Proxies",
+    lowGroupName,
+    ...availableRegionGroups,
+    "REJECT",
+  ]);
+
+  return serviceGroupOrder.map((groupName) => {
+    if (groupName === "Claude") {
+      return {
+        name: groupName,
+        type: "select",
+        proxies: [secUSGroupName, "REJECT"],
+      };
+    }
+
+    if (usDefaultServiceGroupNames.has(groupName)) {
+      const usFirstTargets = availableRegionGroups.includes("US")
+        ? [
+            "US",
+            "Proxies",
+            ...availableRegionGroups.filter((region) => region !== "US"),
+            lowGroupName,
+            "REJECT",
+          ]
+        : defaultCommonServiceTargets;
+
+      return {
+        name: groupName,
+        type: "select",
+        proxies: uniq(usFirstTargets),
+      };
+    }
+
+    return {
+      name: groupName,
+      type: "select",
+      proxies: defaultCommonServiceTargets,
+    };
+  });
 }
 
 /**
@@ -614,41 +766,38 @@ function buildPrependRules(commonPolicy) {
 
     "DOMAIN-SUFFIX,cn,DIRECT",
 
-    "RULE-SET,Gemini,Gemini",
-    "RULE-SET,PayPal,PayPal",
-    "RULE-SET,OpenAI,OpenAI",
-    "RULE-SET,Claude,Claude",
-    "DOMAIN-SUFFIX,ai,🟩SecUS",
-    "DOMAIN-KEYWORD,cursor,🟩SecUS",
+    `RULE-SET,${ruleSetNames.google},Google`,
+    `RULE-SET,${ruleSetNames.gemini},Gemini`,
+    `RULE-SET,${ruleSetNames.microsoft},Microsoft`,
+    `RULE-SET,${ruleSetNames.payPal},PayPal`,
+    `RULE-SET,${ruleSetNames.openAi},OpenAI`,
+    `RULE-SET,${ruleSetNames.claudeReject},REJECT`,
+    `RULE-SET,${ruleSetNames.claude},Claude`,
+    `RULE-SET,${ruleSetNames.twitter},Twitter`,
 
-    "RULE-SET,AD,REJECT",
-    "RULE-SET,EasyList,REJECT",
-    "RULE-SET,EasyListChina,REJECT",
-    "RULE-SET,EasyPrivacy,REJECT",
-    "RULE-SET,ProgramAD,REJECT",
+    `RULE-SET,${ruleSetNames.ad},REJECT`,
+    `RULE-SET,${ruleSetNames.easyList},REJECT`,
+    `RULE-SET,${ruleSetNames.easyListChina},REJECT`,
+    `RULE-SET,${ruleSetNames.easyPrivacy},REJECT`,
+    `RULE-SET,${ruleSetNames.programAd},REJECT`,
 
-    `RULE-SET,Twitter,${commonPolicy}`,
-    `DOMAIN-SUFFIX,io,${commonPolicy}`,
-    `DOMAIN-SUFFIX,steampowered.com,${commonPolicy}`,
-    `RULE-SET,Adobe,${commonPolicy}`,
+    `RULE-SET,${ruleSetNames.adobe},${commonPolicy}`,
   ];
 }
 
 function resolvePolicies(config) {
   return {
-    secUSPolicy: selectPolicy(config, ["🟩SecUS"], "REJECT"),
+    secUSDnsPolicy: selectPolicy(config, [secUSGroupName], "REJECT"),
     commonPolicy: selectPolicy(config, ["Proxies", "Final"], "REJECT"),
   };
 }
 
-function buildAiNameServerPolicy(policyName) {
-  const entries = {};
-  for (const name of aiRuleSets) {
-    entries[`rule-set:${name}`] = dnsConstants.proxyDoh.map(
+function buildSecUSNameServerPolicy(policyName) {
+  return {
+    [`rule-set:${ruleSetNames.claude}`]: dnsConstants.proxyDoh.map(
       (dns) => `${dns}#${policyName}`,
-    );
-  }
-  return entries;
+    ),
+  };
 }
 
 function isFinalGroupName(name = "") {
@@ -658,7 +807,7 @@ function isFinalGroupName(name = "") {
 /**
  * 用于把“其他 AI 相关策略组”放到 AI 区段后面
  * - 不包括核心组
- * - 不包括标准 AI 服务入口组
+ * - 不包括标准服务入口组
  */
 function isAiPolicyGroupName(name = "") {
   const normalized = String(name).toLowerCase();
@@ -667,8 +816,15 @@ function isAiPolicyGroupName(name = "") {
   if (regionOrder.includes(name)) return false;
   if (displayRegionOrder.includes(name)) return false;
   if (coreGroupDisplayOrder.includes(name)) return false;
-  if (aiServiceGroupOrder.includes(name)) return false;
-  if (name === "🟩SecUS" || name === "Tmp" || name === "Proxies") return false;
+  if (serviceGroupOrder.includes(name)) return false;
+  if (
+    name === "Claude" ||
+    name === secUSGroupName ||
+    name === "Tmp" ||
+    name === "Proxies"
+  ) {
+    return false;
+  }
   if (isFinalGroupName(name)) return false;
 
   return aiPolicyKeywords.some((keyword) => normalized.includes(keyword));
@@ -677,7 +833,7 @@ function isAiPolicyGroupName(name = "") {
 /**
  * GUI 顺序：
  * 1. 核心组
- * 2. AI 服务组
+ * 2. 服务入口组
  * 3. 地区组
  * 4. 其他 AI 相关组
  * 5. 其他普通组
@@ -696,7 +852,8 @@ function reorderProxyGroups(config) {
   }
 
   coreGroupDisplayOrder.forEach(pushByName);
-  aiServiceGroupOrder.forEach(pushByName);
+  extraSourceGroupDisplayOrder.forEach(pushByName);
+  serviceGroupOrder.forEach(pushByName);
   displayRegionOrder.forEach(pushByName);
 
   for (const group of groups) {
@@ -795,7 +952,28 @@ function applyDnsConfig(config, policies) {
     : [];
 
   const currentIpv6 =
-    typeof config.dns.ipv6 === "boolean" ? config.dns.ipv6 : true;
+    typeof config.dns.ipv6 === "boolean" ? config.dns.ipv6 : false;
+
+  const currentUseHosts =
+    typeof config.dns["use-hosts"] === "boolean"
+      ? config.dns["use-hosts"]
+      : true;
+
+  const currentUseSystemHosts =
+    typeof config.dns["use-system-hosts"] === "boolean"
+      ? config.dns["use-system-hosts"]
+      : true;
+
+  const currentFallbackFilter =
+    config.dns["fallback-filter"] &&
+    typeof config.dns["fallback-filter"] === "object" &&
+    !Array.isArray(config.dns["fallback-filter"])
+      ? config.dns["fallback-filter"]
+      : {};
+
+  const currentFallbackGeosite = Array.isArray(currentFallbackFilter.geosite)
+    ? currentFallbackFilter.geosite
+    : [];
 
   config.dns = {
     ...config.dns,
@@ -808,8 +986,8 @@ function applyDnsConfig(config, policies) {
     "fake-ip-filter-mode": config.dns["fake-ip-filter-mode"] || "blacklist",
     "prefer-h3": false,
     "respect-rules": true,
-    "use-hosts": false,
-    "use-system-hosts": false,
+    "use-hosts": currentUseHosts,
+    "use-system-hosts": currentUseSystemHosts,
 
     "fake-ip-filter": uniq([
       ...currentFakeIpFilter,
@@ -819,27 +997,33 @@ function applyDnsConfig(config, policies) {
     // bootstrap DNS：只用于 DoH 启动解析
     "default-nameserver": dnsConstants.defaultNameServer,
 
-    // 默认普通解析：走 commonPolicy（优先 Proxies，其次 Final）
-    nameserver: dnsConstants.proxyDoh.map(
-      (dns) => `${dns}#${policies.commonPolicy}`,
-    ),
+    // 默认普通解析：直连 nameserver + 代理 fallback 并发，降低 DNS 完全依赖代理链的问题
+    nameserver: uniq([...dnsConstants.directNameServer]),
 
-    // AI 规则集解析：强制走 SecUS 链
+    // Claude 规则集解析：强制走 SecUS 链
     "nameserver-policy": {
       ...(config.dns["nameserver-policy"] || {}),
       "geosite:cn": dnsConstants.directNameServer,
       "geosite:private": dnsConstants.directNameServer,
-      ...buildAiNameServerPolicy(policies.secUSPolicy),
+      ...buildSecUSNameServerPolicy(policies.secUSDnsPolicy),
     },
 
     "fallback-filter": {
-      geoip: true,
-      "geoip-code": "CN",
-      ipcidr: ["240.0.0.0/4", "0.0.0.0/32"],
-      domain: ["+.google.com", "+.facebook.com", "+.youtube.com"],
+      ...currentFallbackFilter,
+      geoip:
+        typeof currentFallbackFilter.geoip === "boolean"
+          ? currentFallbackFilter.geoip
+          : true,
+      "geoip-code": currentFallbackFilter["geoip-code"] || "CN",
+      geosite: uniq([...currentFallbackGeosite, "gfw"]),
+      ipcidr: Array.isArray(currentFallbackFilter.ipcidr)
+        ? uniq(currentFallbackFilter.ipcidr)
+        : ["240.0.0.0/4", "0.0.0.0/32"],
     },
 
-    fallback: [],
+    fallback: dnsConstants.proxyDoh.map(
+      (dns) => `${dns}#${policies.commonPolicy}`,
+    ),
 
     "proxy-server-nameserver": uniq([...dnsConstants.directNameServer]),
     "direct-nameserver": uniq([...dnsConstants.directNameServer]),
@@ -876,7 +1060,9 @@ function main(config) {
    * 1. 注入静态自定义节点
    */
   customProxies.forEach((proxy) => addNamed(config.proxies, proxy));
-  customSecUSProxies.forEach((proxy) => addNamed(config.proxies, proxy));
+  customSecUSProxies
+    .map(applySecUSClientFingerprint)
+    .forEach((proxy) => addNamed(config.proxies, proxy));
 
   /**
    * 2. 构建动态地区桶
@@ -891,16 +1077,17 @@ function main(config) {
   buildRegionGroups(regionBuckets).forEach((group) => {
     upsertGroup(config["proxy-groups"], group);
   });
+  upsertGroup(config["proxy-groups"], buildLowGroup(dynamicProxyNames));
   upsertGroup(config["proxy-groups"], buildProxiesGroup(regionBuckets));
-  upsertGroup(config["proxy-groups"], buildTmpGroup(regionBuckets));
   upsertGroup(config["proxy-groups"], buildSecUSGroup());
+  upsertGroup(config["proxy-groups"], buildTmpGroup(regionBuckets));
 
   /**
-   * 4. 注入 AI 服务入口组
-   * - OpenAI / Claude / Gemini / PayPal
-   * - 默认只给 🟩SecUS / REJECT
+   * 4. 注入服务入口组
+   * - OpenAI / Claude / Gemini / PayPal / Twitter / Google
+   * - Claude 默认只给 SecUS / REJECT
    */
-  buildAiServiceGroups().forEach((group) => {
+  buildServiceGroups(regionBuckets).forEach((group) => {
     upsertGroup(config["proxy-groups"], group);
   });
 
@@ -917,7 +1104,7 @@ function main(config) {
   /**
    * 7. 注入 rule-providers
    */
-  Object.entries(ruleProviders).forEach(([name, provider]) => {
+  Object.entries(ruleSetProviders).forEach(([name, provider]) => {
     setRuleProvider(config, name, provider);
   });
 
@@ -928,7 +1115,7 @@ function main(config) {
 
   /**
    * 9. 注入前置规则
-   * - AI 规则先打服务组
+   * - Claude 规则先打 Claude
    * - 普通规则走 commonPolicy
    */
   prependRules(config, buildPrependRules(policies.commonPolicy));

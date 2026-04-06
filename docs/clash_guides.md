@@ -1,7 +1,7 @@
 # 📦 Clash Verge Static Override Rules Template
 
 > 用于补充 JS 覆盖脚本的业务分流规则
-> 适用于：EXE 分流 / Tmp 分流 / SecUS 强约束 / 本地直连
+> 适用于：EXE 分流 / Tmp 分流 / SecUS🟩 强约束 / 本地直连
 
 ---
 
@@ -10,7 +10,7 @@
 本模板用于：
 
 - 为 `Tmp` 提供**实际流量入口**
-- 为 `🟩SecUS` 提供**补充分流**
+- 为 `SecUS🟩` 提供**补充分流**
 - 提供 **进程级（EXE）控制能力**
 - 避免污染主链路 `Proxies`
 
@@ -20,6 +20,11 @@
 | ------------ | --------------------------------- |
 | JS 覆盖脚本  | 构建策略组 / DNS / TUN / 分组结构 |
 | 静态覆写规则 | 控制“哪些流量进入哪个策略组”      |
+
+补充：
+
+- `LOW` 由脚本自动生成，自动收集名称中包含 `实验性` 的节点
+- `Proxies` 会包含 `LOW` 作为额外候选链路
 
 ---
 
@@ -47,16 +52,16 @@
 
 ---
 
-### 2. SecUS 是“强约束链路”
+### 2. SecUS🟩 是“强约束链路”
 
 特点：
 
 - 用于 AI / 风控 / 干净出口
 - DNS + Proxy 一致（脚本已保证）
 
-建议只用于：
+默认建议只用于：
 
-- OpenAI / Claude / Gemini 补充域
+- Claude 补充域
 - 风控敏感 SaaS
 - 需要稳定出口 IP 的业务
 
@@ -77,7 +82,7 @@ Clash 规则是 **自上而下匹配**：
 
 ```yaml
 # 正确（精确优先）
-- PROCESS-NAME,cursor.exe,🟩SecUS
+- PROCESS-NAME,cursor.exe,SecUS🟩
 - DOMAIN-SUFFIX,example.com,Tmp
 
 # 错误（宽规则抢先）
@@ -98,8 +103,8 @@ rules:
   # Tmp
   - PROCESS-NAME,telegram.exe,Tmp
 
-  # SecUS
-  - DOMAIN-SUFFIX,openrouter.ai,🟩SecUS
+  # SecUS🟩
+  - DOMAIN-SUFFIX,openrouter.ai,SecUS🟩
 
   # DIRECT
   - DOMAIN-SUFFIX,lan,DIRECT
@@ -114,13 +119,20 @@ rules:
 
 你的脚本已包含：
 
-- OpenAI / Claude / Gemini / PayPal rule-set
-- AI DNS 强制走 SecUS
+- OpenAI / Claude / ClaudeReject / Gemini / Microsoft / PayPal / Twitter / Google rule-set
+- Claude DNS 强制走 SecUS🟩
+- ClaudeReject 会在 Claude 之前优先命中 `REJECT`
+
+其中：
+
+- `OpenAI` / `Gemini` / `Microsoft` / `PayPal` / `Twitter` / `Google` 服务组默认首选 `US`
+- 候选顺序为：`US -> Proxies -> 其他地区 -> LOW -> REJECT`
+- 内部 `rule-provider` 名与服务组名已解耦，例如 `RULE-SET,googleRuleSet,Google`
 
 👉 不建议重复写：
 
 ```yaml
-- DOMAIN-SUFFIX,openai.com,🟩SecUS # ❌ 已内置
+- DOMAIN-SUFFIX,anthropic.com,SecUS🟩 # ❌ Claude 相关已内置
 ```
 
 ---
@@ -156,15 +168,31 @@ tun.route-exclude-address
 
 ---
 
+### 4. 宽匹配与单域规则请放在模板侧
+
+像下面这类规则：
+
+```yaml
+- DOMAIN-SUFFIX,ai,Proxies
+- DOMAIN-SUFFIX,io,Proxies
+- DOMAIN-KEYWORD,cursor,Proxies
+- DOMAIN-SUFFIX,steampowered.com,Proxies
+```
+
+不再建议由 JS 脚本内置注入，而应放在 `override.template.yaml` 的高级规则区按需启用。
+
+---
+
 ## ✅ Best Practice（推荐架构）
 
 ```text
-[静态规则] → Tmp / SecUS / DIRECT
+[静态规则] → Tmp / SecUS🟩 / DIRECT / (可选) Proxies / Final
          ↓
-[JS 脚本] → Proxies / DNS / TUN / 分组
+[JS 脚本] → Proxies / SecUS🟩 / DNS / TUN / 分组
 ```
 
 即：
 
 - **脚本控制结构**
 - **规则控制流量入口**
+- `Proxies` / `Final` 可在高级场景下由静态模板直接引用
