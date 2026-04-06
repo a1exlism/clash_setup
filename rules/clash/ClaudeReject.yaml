@@ -1,0 +1,6 @@
+payload:
+  - AND,((DOMAIN-SUFFIX,claude.ai),(NETWORK,udp))
+  - AND,((DOMAIN-SUFFIX,anthropic.com),(NETWORK,udp))
+  - AND,((DOMAIN-SUFFIX,api.claude.ai),(NETWORK,udp))
+  - AND,((DOMAIN-SUFFIX,claudeusercontent.com),(NETWORK,udp))
+  - AND,((DOMAIN-SUFFIX,claudeusercontent.ai),(NETWORK,udp))

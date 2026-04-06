@@ -1,0 +1,36 @@
+# update on Saturday, March 28, 2026
+payload:
+  - DOMAIN,api.anthropic.com
+  - DOMAIN,claude.ai
+  - DOMAIN,claudeusercontent.com
+  - DOMAIN,claudeplatform.com
+  - DOMAIN,claudefiles.com
+  - DOMAIN,claudeusercontent.ai
+  - DOMAIN-SUFFIX,anthropic.com
+  - DOMAIN-SUFFIX,claude.ai
+  - DOMAIN-SUFFIX,chat.claude.ai
+  - DOMAIN-SUFFIX,console.anthropic.com
+  - DOMAIN-SUFFIX,api.anthropic.com
+  - DOMAIN-SUFFIX,api.claude.ai
+  - DOMAIN-SUFFIX,auth.anthropic.com
+  - DOMAIN-SUFFIX,accounts.anthropic.com
+  - DOMAIN-SUFFIX,claude.com
+  - DOMAIN-SUFFIX,claudeusercontent.com
+  - DOMAIN-SUFFIX,claudeusercontent.ai
+  - DOMAIN-SUFFIX,claudeplatform.com
+  - DOMAIN-SUFFIX,claudefiles.com
+  - DOMAIN-SUFFIX,okta.com
+  - DOMAIN-SUFFIX,arkoselabs.com
+  - DOMAIN-SUFFIX,datadoghq.com
+  - DOMAIN-SUFFIX,segment.io
+  - DOMAIN-SUFFIX,segment.com
+  - DOMAIN-SUFFIX,analytics.google.com
+  - DOMAIN-SUFFIX,amplitude.com
+  - DOMAIN-SUFFIX,cloudflare.net
+  - DOMAIN-SUFFIX,cloudflareinsights.com
+  - DOMAIN-SUFFIX,livekit.cloud
+  - DOMAIN-SUFFIX,cdn.cloudflare.net
+  - DOMAIN-SUFFIX,storage.googleapis.com
+  - DOMAIN-KEYWORD,claude
+  - DOMAIN-KEYWORD,anthropic
+  - IP-CIDR,160.79.104.10/32
